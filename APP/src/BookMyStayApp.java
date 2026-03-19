@@ -6,7 +6,6 @@ import java.util.*;
  * ================================================================
  */
 class Reservation {
-
     private String guestName;
     private String roomType;
 
@@ -27,53 +26,121 @@ class Reservation {
 
 /**
  * ================================================================
- * CLASS - BookingHistory
+ * CLASS - BookingRequestQueue
  * ================================================================
- *
- * Stores confirmed reservations.
  */
-class BookingHistory {
+class BookingRequestQueue {
+    private Queue<Reservation> queue;
 
-    /** List storing confirmed reservations */
-    private List<Reservation> confirmedReservations;
-
-    public BookingHistory() {
-        confirmedReservations = new ArrayList<>();
+    public BookingRequestQueue() {
+        queue = new LinkedList<>();
     }
 
-    /** Add reservation */
-    public void addReservation(Reservation reservation) {
-        confirmedReservations.add(reservation);
+    public void addRequest(Reservation r) {
+        queue.offer(r);
     }
 
-    /** Get all reservations */
-    public List<Reservation> getConfirmedReservations() {
-        return confirmedReservations;
+    public Reservation getNextRequest() {
+        return queue.poll();
+    }
+
+    public boolean isEmpty() {
+        return queue.isEmpty();
     }
 }
 
 
 /**
  * ================================================================
- * CLASS - BookingReportService
+ * CLASS - RoomInventory
  * ================================================================
- *
- * Generates reports from booking history.
  */
-class BookingReportService {
+class RoomInventory {
+    private Map<String, Integer> availability;
 
-    /**
-     * Displays booking report
-     */
-    public void generateReport(BookingHistory history) {
+    public RoomInventory() {
+        availability = new HashMap<>();
+        availability.put("Single", 4);
+        availability.put("Double", 3);
+        availability.put("Suite", 2);
+    }
 
-        System.out.println("\nBooking History Report");
+    public Map<String, Integer> getAvailability() {
+        return availability;
+    }
 
-        for (Reservation r : history.getConfirmedReservations()) {
-            System.out.println(
-                    "Guest: " + r.getGuestName() +
-                    ", Room Type: " + r.getRoomType()
-            );
+    public void decrease(String type) {
+        availability.put(type, availability.get(type) - 1);
+    }
+}
+
+
+/**
+ * ================================================================
+ * CLASS - RoomAllocationService
+ * ================================================================
+ */
+class RoomAllocationService {
+
+    private Map<String, Integer> counters = new HashMap<>();
+
+    public synchronized void allocateRoom(Reservation r, RoomInventory inventory) {
+
+        String type = r.getRoomType();
+
+        if (inventory.getAvailability().get(type) <= 0) {
+            return;
+        }
+
+        inventory.decrease(type);
+
+        counters.put(type, counters.getOrDefault(type, 0) + 1);
+        String roomId = type + "-" + counters.get(type);
+
+        System.out.println("Booking confirmed for Guest: "
+                + r.getGuestName() + ", Room ID: " + roomId);
+    }
+}
+
+
+/**
+ * ================================================================
+ * CLASS - ConcurrentBookingProcessor
+ * ================================================================
+ */
+class ConcurrentBookingProcessor implements Runnable {
+
+    private BookingRequestQueue bookingQueue;
+    private RoomInventory inventory;
+    private RoomAllocationService allocationService;
+
+    public ConcurrentBookingProcessor(
+            BookingRequestQueue bookingQueue,
+            RoomInventory inventory,
+            RoomAllocationService allocationService) {
+
+        this.bookingQueue = bookingQueue;
+        this.inventory = inventory;
+        this.allocationService = allocationService;
+    }
+
+    @Override
+    public void run() {
+
+        while (true) {
+
+            Reservation reservation;
+
+            // 🔒 Synchronize queue
+            synchronized (bookingQueue) {
+                if (bookingQueue.isEmpty()) break;
+                reservation = bookingQueue.getNextRequest();
+            }
+
+            // 🔒 Synchronize inventory
+            synchronized (inventory) {
+                allocationService.allocateRoom(reservation, inventory);
+            }
         }
     }
 }
@@ -81,25 +148,48 @@ class BookingReportService {
 
 /**
  * ================================================================
- * MAIN CLASS - UseCase8BookingHistoryReport
+ * MAIN CLASS - UseCase11ConcurrentBookingSimulation
  * ================================================================
  */
 public class BookMyStayApp {
 
     public static void main(String[] args) {
 
-        System.out.println("Booking History and Reporting");
+        System.out.println("Concurrent Booking Simulation");
 
-        // Create booking history
-        BookingHistory history = new BookingHistory();
+        // Shared resources
+        BookingRequestQueue bookingQueue = new BookingRequestQueue();
+        RoomInventory inventory = new RoomInventory();
+        RoomAllocationService allocationService = new RoomAllocationService();
 
-        // Add confirmed bookings (from previous UCs)
-        history.addReservation(new Reservation("Abhi", "Single"));
-        history.addReservation(new Reservation("Subha", "Double"));
-        history.addReservation(new Reservation("Vanmathi", "Suite"));
+        // Add booking requests
+        bookingQueue.addRequest(new Reservation("Abhi", "Single"));
+        bookingQueue.addRequest(new Reservation("Vanmathi", "Double"));
+        bookingQueue.addRequest(new Reservation("Kunal", "Suite"));
+        bookingQueue.addRequest(new Reservation("Subha", "Single"));
 
-        // Generate report
-        BookingReportService reportService = new BookingReportService();
-        reportService.generateReport(history);
+        // Create threads
+        Thread t1 = new Thread(new ConcurrentBookingProcessor(
+                bookingQueue, inventory, allocationService));
+
+        Thread t2 = new Thread(new ConcurrentBookingProcessor(
+                bookingQueue, inventory, allocationService));
+
+        // Start threads
+        t1.start();
+        t2.start();
+
+        try {
+            t1.join();
+            t2.join();
+        } catch (InterruptedException e) {
+            System.out.println("Thread execution interrupted.");
+        }
+
+        // Print remaining inventory
+        System.out.println("\nRemaining Inventory:");
+        for (Map.Entry<String, Integer> entry : inventory.getAvailability().entrySet()) {
+            System.out.println(entry.getKey() + ": " + entry.getValue());
+        }
     }
 }
